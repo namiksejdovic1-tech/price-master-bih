@@ -1,0 +1,38 @@
+{
+    "domod": {
+        "currency": "BAM",
+        "search_url": "https://www.domod.ba/search?q={query}",
+        "selectors": {
+            "item": ".product-item, .product-card, .item",
+            "title": ".product-title, .product-name, h3",
+            "price": ".price, .current-price, .price-value"
+        }
+    },
+    "tehnomag": {
+        "currency": "BAM",
+        "search_url": "https://www.tehnomag.com/search?query={query}",
+        "selectors": {
+            "item": ".product-card, .product-item, .item",
+            "title": ".product-name, .product-title, h3",
+            "price": ".current-price, .price, .price-value"
+        }
+    },
+    "technoshop": {
+        "currency": "BAM",
+        "search_url": "https://www.technoshop.ba/search?q={query}",
+        "selectors": {
+            "item": ".item, .product-card, .product-item",
+            "title": "h3, .product-name, .product-title",
+            "price": ".price-value, .price, .current-price"
+        }
+    },
+    "ekupi": {
+        "currency": "BAM",
+        "search_url": "https://www.ekupi.ba/search?text={query}",
+        "selectors": {
+            "item": ".product-tile, .product-item, .product-card",
+            "title": ".product-name, .product-title, h3",
+            "price": ".price, .current-price, .price-value"
+        }
+    }
+}
