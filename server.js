@@ -3,9 +3,10 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const Tesseract = require('tesseract.js');
-const puppeteer = require('puppeteer');
 require('dotenv').config();
+
+const ScraperEngine = require('./scraper/scraper');
+const OCRProcessor = require('./scraper/utils/ocr');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -22,158 +23,13 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 }
 });
 
+// Initialize engines
+const scraperEngine = new ScraperEngine();
+const ocrProcessor = OCRProcessor;
+
 // In-memory storage
 let products = [];
 let productIdCounter = 1;
-
-// REAL SCRAPER - BijelaTehnika
-async function scrapeBijelaTehnika(productName) {
-    let browser;
-    try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu'
-            ],
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
-        });
-
-        const page = await browser.newPage();
-        const searchUrl = `https://www.bijelatehnika.com/pretraga?q=${encodeURIComponent(productName)}`;
-
-        await page.goto(searchUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-
-        const result = await page.evaluate(() => {
-            const priceEl = document.querySelector('.product-price, .price, [class*="price"]');
-            const linkEl = document.querySelector('.product-link, a[href*="/product"], a[href*="/proizvod"]');
-
-            if (priceEl && linkEl) {
-                const priceText = priceEl.innerText.replace(/[^\d,]/g, '');
-                const price = parseFloat(priceText.replace(',', '.'));
-                return {
-                    found: true,
-                    price: price,
-                    url: linkEl.href
-                };
-            }
-            return { found: false, price: 0, url: '' };
-        });
-
-        await browser.close();
-        return result;
-    } catch (error) {
-        console.error('BijelaTehnika scrape error:', error.message);
-        if (browser) await browser.close();
-        return { found: false, price: 0, url: '' };
-    }
-}
-
-// REAL SCRAPER - Tehnomag
-async function scrapeTechnomag(productName) {
-    let browser;
-    try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu'
-            ],
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
-        });
-
-        const page = await browser.newPage();
-        const searchUrl = `https://www.tehnomag.ba/pretraga?query=${encodeURIComponent(productName)}`;
-
-        await page.goto(searchUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-
-        const result = await page.evaluate(() => {
-            const priceEl = document.querySelector('.product-price, .price, [class*="price"]');
-            const linkEl = document.querySelector('.product-link, a[href*="/product"], a[href*="/proizvod"]');
-
-            if (priceEl && linkEl) {
-                const priceText = priceEl.innerText.replace(/[^\d,]/g, '');
-                const price = parseFloat(priceText.replace(',', '.'));
-                return {
-                    found: true,
-                    price: price,
-                    url: linkEl.href
-                };
-            }
-            return { found: false, price: 0, url: '' };
-        });
-
-        await browser.close();
-        return result;
-    } catch (error) {
-        console.error('Tehnomag scrape error:', error.message);
-        if (browser) await browser.close();
-        return { found: false, price: 0, url: '' };
-    }
-}
-
-// Combined scraper
-async function scrapeCompetitors(productName) {
-    console.log(`Scraping competitors for: ${productName}`);
-
-    const [bijelaTehnika, tehnomag] = await Promise.all([
-        scrapeBijelaTehnika(productName),
-        scrapeTechnomag(productName)
-    ]);
-
-    return {
-        BijelaTehnika: bijelaTehnika,
-        Tehnomag: tehnomag
-    };
-}
-
-// OCR function
-async function extractTextFromImage(filePath) {
-    try {
-        console.log('Starting OCR for:', filePath);
-        const { data: { text } } = await Tesseract.recognize(filePath, 'bos+eng', {
-            logger: m => console.log('OCR Progress:', m.status, m.progress)
-        });
-        console.log('OCR completed, text length:', text.length);
-        return text;
-    } catch (error) {
-        console.error('OCR Error:', error);
-        return '';
-    }
-}
-
-// Parse products from OCR text
-function parseProductsFromText(text) {
-    const lines = text.split('\n').filter(l => l.trim());
-    const products = [];
-
-    for (const line of lines) {
-        // Match price pattern: 1.234,56 or 234,56
-        const priceMatch = line.match(/(\d{1,3}(?:\.\d{3})*,\d{2})/);
-        if (!priceMatch) continue;
-
-        const priceStr = priceMatch[1];
-        const price = parseFloat(priceStr.replace(/\./g, '').replace(',', '.'));
-
-        // Extract product name
-        const name = line.substring(0, line.indexOf(priceStr)).trim()
-            .replace(/\b(R1|R2|R3|PDV|VAT|%|KOM|kom|JM)\b/gi, '')
-            .replace(/^\d+\s*/, '')
-            .trim();
-
-        if (name.length > 5 && !name.match(/^(UKUPNO|TOTAL|PDV)/i) && price > 0) {
-            products.push({ name, price });
-        }
-    }
-
-    return products;
-}
 
 // Routes
 app.get('/', (req, res) => {
@@ -181,22 +37,30 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/products', (req, res) => {
-    const { search, brand, minPrice, maxPrice, page = 1, limit = 6 } = req.query;
+    const { search, brand, minPrice, maxPrice, minIndex, maxIndex, page = 1, limit = 6 } = req.query;
 
     let filtered = [...products];
 
+    // Fast search
     if (search) {
         const searchLower = search.toLowerCase();
         filtered = filtered.filter(p => p.product.toLowerCase().includes(searchLower));
     }
 
+    // Brand filter
     if (brand) {
         filtered = filtered.filter(p => p.product.toLowerCase().includes(brand.toLowerCase()));
     }
 
+    // Price range
     if (minPrice) filtered = filtered.filter(p => p.myPrice >= parseFloat(minPrice));
     if (maxPrice) filtered = filtered.filter(p => p.myPrice <= parseFloat(maxPrice));
 
+    // Competitive index range
+    if (minIndex) filtered = filtered.filter(p => p.analysis >= parseInt(minIndex));
+    if (maxIndex) filtered = filtered.filter(p => p.analysis <= parseInt(maxIndex));
+
+    // Pagination
     const startIndex = (page - 1) * limit;
     const paginated = filtered.slice(startIndex, startIndex + parseInt(limit));
 
@@ -216,24 +80,25 @@ app.post('/api/products/manual', async (req, res) => {
             return res.status(400).json({ error: 'Name and price required' });
         }
 
-        console.log(`Adding manual product: ${name} - ${price} KM`);
+        console.log(`\n📝 Manual product: ${name} - ${price} KM`);
 
-        // Scrape competitors
-        const competitors = await scrapeCompetitors(name);
+        // Scrape competitors - THIS IS REAL SCRAPING NOW
+        const result = await scraperEngine.scrapeProduct(name, parseFloat(price));
 
         const product = {
             id: productIdCounter++,
-            product: name,
-            myPrice: parseFloat(price),
-            competitors,
-            analysis: { competitiveIndex: 50 },
-            aiAdvisor: {},
-            timestamp: new Date().toISOString()
+            ...result,
+            source: 'manual',
+            createdAt: new Date().toISOString()
         };
 
+        // Add to beginning (newest first)
         products.unshift(product);
 
+        console.log(`✅ Product added with ${Object.keys(result.competitors).length} competitor checks`);
+
         res.json({ success: true, product });
+
     } catch (error) {
         console.error('Manual add error:', error);
         res.status(500).json({ error: error.message });
@@ -246,49 +111,57 @@ app.post('/api/products/ocr', upload.single('file'), async (req, res) => {
             return res.status(400).json({ error: 'No file uploaded' });
         }
 
-        console.log('Processing OCR for:', req.file.originalname);
+        console.log(`\n📄 OCR Upload: ${req.file.originalname}`);
 
-        const text = await extractTextFromImage(req.file.path);
-        const extractedProducts = parseProductsFromText(text);
+        // Extract products using OCR
+        const ocrResult = await ocrProcessor.parseInvoice(req.file.path);
 
-        // Cleanup
+        // Cleanup uploaded file
         fs.unlinkSync(req.file.path);
 
-        if (extractedProducts.length === 0) {
+        if (ocrResult.products.length === 0) {
             return res.json({
                 success: true,
                 productsAdded: 0,
-                message: 'No products found in image'
+                message: 'No products found in image',
+                extractedText: ocrResult.rawText.substring(0, 500)
             });
         }
 
-        console.log(`Found ${extractedProducts.length} products via OCR`);
+        console.log(`✅ OCR found ${ocrResult.products.length} products`);
 
-        // Add products with scraping
-        for (const prod of extractedProducts) {
-            const competitors = await scrapeCompetitors(prod.name);
+        // Scrape competitors for all products - REAL SCRAPING
+        const scrapedProducts = await scraperEngine.scrapeMultipleProducts(ocrResult.products);
 
-            products.unshift({
-                id: productIdCounter++,
-                product: prod.name,
-                myPrice: prod.price,
-                competitors,
-                analysis: { competitiveIndex: 50 },
-                aiAdvisor: {},
-                timestamp: new Date().toISOString()
-            });
-        }
+        // Add all products to database
+        const newProducts = scrapedProducts.map(result => ({
+            id: productIdCounter++,
+            ...result,
+            source: 'ocr',
+            ocrConfidence: 'high',
+            createdAt: new Date().toISOString()
+        }));
+
+        // Add to beginning (newest first)
+        products.unshift(...newProducts);
+
+        console.log(`✅ Added ${newProducts.length} products with competitor data`);
 
         res.json({
             success: true,
-            productsAdded: extractedProducts.length
+            productsFound: ocrResult.products.length,
+            productsAdded: newProducts.length,
+            products: newProducts
         });
 
     } catch (error) {
         console.error('OCR error:', error);
+
+        // Cleanup on error
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
         }
+
         res.status(500).json({ error: error.message });
     }
 });
@@ -302,18 +175,24 @@ app.post('/api/products/:id/refresh', async (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
-        const product = products[productIndex];
-        console.log(`Refreshing product: ${product.product}`);
+        const oldProduct = products[productIndex];
+        console.log(`\n🔄 Refreshing: ${oldProduct.product}`);
 
-        const competitors = await scrapeCompetitors(product.product);
+        // Re-scrape with REAL scraper
+        const refreshed = await scraperEngine.refreshProduct(oldProduct);
 
-        products[productIndex] = {
-            ...product,
-            competitors,
+        const updatedProduct = {
+            ...oldProduct,
+            ...refreshed,
             lastRefresh: new Date().toISOString()
         };
 
-        res.json({ success: true, product: products[productIndex] });
+        products[productIndex] = updatedProduct;
+
+        console.log(`✅ Refreshed with new competitor data`);
+
+        res.json({ success: true, product: updatedProduct });
+
     } catch (error) {
         console.error('Refresh error:', error);
         res.status(500).json({ error: error.message });
@@ -331,27 +210,80 @@ app.delete('/api/products/:id', (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
+        console.log(`🗑️  Deleted product ID ${productId}`);
+
         res.json({ success: true });
+
     } catch (error) {
         console.error('Delete error:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', products: products.length });
+app.post('/api/scrape-random', async (req, res) => {
+    try {
+        const count = parseInt(req.body.count) || 10;
+
+        console.log(`\n🎲 Scraping ${count} random products from BijelaTehnika`);
+
+        const randomProducts = await scraperEngine.getMyRandomProducts(count);
+
+        // Scrape competitors for each
+        const scrapedProducts = await scraperEngine.scrapeMultipleProducts(randomProducts);
+
+        // Add to database
+        const newProducts = scrapedProducts.map(result => ({
+            id: productIdCounter++,
+            ...result,
+            source: 'auto',
+            createdAt: new Date().toISOString()
+        }));
+
+        products.unshift(...newProducts);
+
+        console.log(`✅ Added ${newProducts.length} random products`);
+
+        res.json({
+            success: true,
+            productsAdded: newProducts.length,
+            products: newProducts
+        });
+
+    } catch (error) {
+        console.error('Random scrape error:', error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        products: products.length,
+        scraperReady: true
+    });
+});
+
+// Error handling
 app.use((err, req, res, next) => {
     console.error('Server error:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM received, closing scraper...');
+    await scraperEngine.close();
+    process.exit(0);
+});
+
+// Start server
 app.listen(PORT, () => {
     console.log(`
 ╔═══════════════════════════════════════════════╗
-║   🚀 Price Master BIH - Admin Dashboard      ║
+║   🚀 Price Master BIH - PRODUCTION           ║
 ║   Server running on port ${PORT}                ║
+║   Scraper: ACTIVE (4 competitors)            ║
+║   OCR: ENABLED                               ║
 ╚═══════════════════════════════════════════════╝
     `);
 });
