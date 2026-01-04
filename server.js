@@ -26,19 +26,121 @@ const upload = multer({
 let products = [];
 let productIdCounter = 1;
 
-// Simple scraper function
-async function scrapeCompetitor(productName) {
-    // Placeholder - returns mock data for now
+// REAL SCRAPER - BijelaTehnika
+async function scrapeBijelaTehnika(productName) {
+    let browser;
+    try {
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
+            ],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
+        });
+
+        const page = await browser.newPage();
+        const searchUrl = `https://www.bijelatehnika.com/pretraga?q=${encodeURIComponent(productName)}`;
+
+        await page.goto(searchUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+
+        const result = await page.evaluate(() => {
+            const priceEl = document.querySelector('.product-price, .price, [class*="price"]');
+            const linkEl = document.querySelector('.product-link, a[href*="/product"], a[href*="/proizvod"]');
+
+            if (priceEl && linkEl) {
+                const priceText = priceEl.innerText.replace(/[^\d,]/g, '');
+                const price = parseFloat(priceText.replace(',', '.'));
+                return {
+                    found: true,
+                    price: price,
+                    url: linkEl.href
+                };
+            }
+            return { found: false, price: 0, url: '' };
+        });
+
+        await browser.close();
+        return result;
+    } catch (error) {
+        console.error('BijelaTehnika scrape error:', error.message);
+        if (browser) await browser.close();
+        return { found: false, price: 0, url: '' };
+    }
+}
+
+// REAL SCRAPER - Tehnomag
+async function scrapeTechnomag(productName) {
+    let browser;
+    try {
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
+            ],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
+        });
+
+        const page = await browser.newPage();
+        const searchUrl = `https://www.tehnomag.ba/pretraga?query=${encodeURIComponent(productName)}`;
+
+        await page.goto(searchUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+
+        const result = await page.evaluate(() => {
+            const priceEl = document.querySelector('.product-price, .price, [class*="price"]');
+            const linkEl = document.querySelector('.product-link, a[href*="/product"], a[href*="/proizvod"]');
+
+            if (priceEl && linkEl) {
+                const priceText = priceEl.innerText.replace(/[^\d,]/g, '');
+                const price = parseFloat(priceText.replace(',', '.'));
+                return {
+                    found: true,
+                    price: price,
+                    url: linkEl.href
+                };
+            }
+            return { found: false, price: 0, url: '' };
+        });
+
+        await browser.close();
+        return result;
+    } catch (error) {
+        console.error('Tehnomag scrape error:', error.message);
+        if (browser) await browser.close();
+        return { found: false, price: 0, url: '' };
+    }
+}
+
+// Combined scraper
+async function scrapeCompetitors(productName) {
+    console.log(`Scraping competitors for: ${productName}`);
+
+    const [bijelaTehnika, tehnomag] = await Promise.all([
+        scrapeBijelaTehnika(productName),
+        scrapeTechnomag(productName)
+    ]);
+
     return {
-        BijelaTehnika: { found: false, price: 0 },
-        Tehnomag: { found: false, price: 0 }
+        BijelaTehnika: bijelaTehnika,
+        Tehnomag: tehnomag
     };
 }
 
 // OCR function
 async function extractTextFromImage(filePath) {
     try {
-        const { data: { text } } = await Tesseract.recognize(filePath, 'bos+eng');
+        console.log('Starting OCR for:', filePath);
+        const { data: { text } } = await Tesseract.recognize(filePath, 'bos+eng', {
+            logger: m => console.log('OCR Progress:', m.status, m.progress)
+        });
+        console.log('OCR completed, text length:', text.length);
         return text;
     } catch (error) {
         console.error('OCR Error:', error);
@@ -60,9 +162,12 @@ function parseProductsFromText(text) {
         const price = parseFloat(priceStr.replace(/\./g, '').replace(',', '.'));
 
         // Extract product name
-        const name = line.substring(0, line.indexOf(priceStr)).trim();
+        const name = line.substring(0, line.indexOf(priceStr)).trim()
+            .replace(/\b(R1|R2|R3|PDV|VAT|%|KOM|kom|JM)\b/gi, '')
+            .replace(/^\d+\s*/, '')
+            .trim();
 
-        if (name.length > 5 && !name.match(/^(UKUPNO|TOTAL|PDV)/i)) {
+        if (name.length > 5 && !name.match(/^(UKUPNO|TOTAL|PDV)/i) && price > 0) {
             products.push({ name, price });
         }
     }
@@ -111,7 +216,10 @@ app.post('/api/products/manual', async (req, res) => {
             return res.status(400).json({ error: 'Name and price required' });
         }
 
-        const competitors = await scrapeCompetitor(name);
+        console.log(`Adding manual product: ${name} - ${price} KM`);
+
+        // Scrape competitors
+        const competitors = await scrapeCompetitors(name);
 
         const product = {
             id: productIdCounter++,
@@ -154,9 +262,11 @@ app.post('/api/products/ocr', upload.single('file'), async (req, res) => {
             });
         }
 
-        // Add products
+        console.log(`Found ${extractedProducts.length} products via OCR`);
+
+        // Add products with scraping
         for (const prod of extractedProducts) {
-            const competitors = await scrapeCompetitor(prod.name);
+            const competitors = await scrapeCompetitors(prod.name);
 
             products.unshift({
                 id: productIdCounter++,
@@ -193,7 +303,9 @@ app.post('/api/products/:id/refresh', async (req, res) => {
         }
 
         const product = products[productIndex];
-        const competitors = await scrapeCompetitor(product.product);
+        console.log(`Refreshing product: ${product.product}`);
+
+        const competitors = await scrapeCompetitors(product.product);
 
         products[productIndex] = {
             ...product,
@@ -245,4 +357,3 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
-
