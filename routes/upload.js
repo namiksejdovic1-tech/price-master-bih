@@ -32,3 +32,13 @@ export default function (app) {
     }
   });
 }
+import { parseInvoice } from '../services/invoiceParser.js';
+
+router.post('/', async (req, res) => {
+   try {
+       const data = await parseInvoice(req.file.path);
+       res.json(data);
+   } catch(e) {
+       res.status(500).json({ error: e.message });
+   }
+});
