@@ -1,26 +1,22 @@
-FROM node:18-slim
+FROM mcr.microsoft.com/playwright:v1.47.0-jammy
 
-# Install Puppeteer dependencies
-RUN apt-get update && apt-get install -y \
-    chromium \
-    fonts-liberation \
-    libnss3 \
-    libxss1 \
-    libasound2 \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
+# Set working directory
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
+
+# Install dependencies
 RUN npm install --production
 
+# Copy application code
 COPY . .
 
+# Create uploads directory
 RUN mkdir -p uploads
 
+# Expose port
 EXPOSE 8080
 
+# Start server
 CMD ["node", "server.js"]
