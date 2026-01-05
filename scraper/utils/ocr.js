@@ -1,159 +1,132 @@
-import Tesseract from 'tesseract.js';
-import { PriceParser } from './price.js';
+// OCR Invoice Parser - EXTRACT PRODUCT NAMES ONLY (no prices)
+const Tesseract = require('tesseract.js');
+const pdf = require('pdf-parse');
 
-// OCR utilities for extracting text from invoices and images
-export class OCRProcessor {
-    constructor() {
-        this.worker = null;
+/**
+ * Parse invoice text - EXTRACT ONLY PRODUCT NAMES
+ * Prices are NOT extracted - we scrape competitors instead
+ */
+function parseInvoiceText(text) {
+    const lines = text
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 4);
+
+    const products = [];
+    const seen = new Set(); // Prevent duplicates
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Skip headers, totals, and metadata
+        if (/ukupno|subtotal|pdv|total|račun|faktura|invoice|napomena|datum|date|adresa|telefon|fax|broj|način/i.test(line)) {
+            continue;
+        }
+
+        // Skip lines that are just numbders or prices
+        if (/^\d+[.,]?\d*\s*(KM|BAM|kom|EUR)?$/i.test(line)) {
+            continue;
+        }
+
+        // Look for product lines (lines with letters and some words)
+        // Must have at least 2 words and some letters
+        const hasLetters = /[a-zA-ZčćžšđČĆŽŠĐ]/.test(line);
+        const wordCount = line.split(/\s+/).length;
+
+        if (hasLetters && wordCount >= 2) {
+            let name = cleanName(line);
+
+            // Must be at least 5 chars after cleaning
+            if (name && name.length >= 5) {
+                const normalized = name.toLowerCase();
+
+                if (!seen.has(normalized)) {
+                    seen.add(normalized);
+                    products.push({
+                        name: name,
+                        source: 'ocr'
+                    });
+                }
+            }
+        }
     }
 
-    // Initialize Tesseract worker
-    async initialize() {
-        if (!this.worker) {
-            this.worker = await Tesseract.createWorker('bos+eng', 1, {
+    return products;
+}
+
+/**
+ * Clean product name - remove noise but keep brand/model info
+ */
+function cleanName(name) {
+    return name
+        // Remove common prefixes (quantities, item numbers)
+        .replace(/^\d+\s+/, '')
+        .replace(/^[RB]+\s+\d+\s+/, '') // Remove "RB 1 ", "R 2 " etc.
+        // Remove prices at end
+        .replace(/\d+[.,]\d{2}\s*(KM|BAM|EUR)?\s*$/gi, '')
+        // Keep alphanumeric, spaces, dashes, and Bosnian characters
+        .replace(/[^\wčćžšđČĆŽŠĐ\d\s\-]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
+ * Main OCR processor - handles PDF and images
+ * Returns ONLY product names (no prices)
+ */
+async function parseInvoice(filePath) {
+    const fs = require('fs');
+    const path = require('path');
+
+    try {
+        const ext = path.extname(filePath).toLowerCase();
+        let text = '';
+
+        if (ext === '.pdf') {
+            // PDF extraction
+            const dataBuffer = fs.readFileSync(filePath);
+            const data = await pdf(dataBuffer);
+            text = data.text;
+            console.log('📄 PDF parsed, extracting product names...');
+        } else {
+            // Image OCR (JPG, PNG)
+            console.log('🖼️  Image OCR starting (tesseract.js)...');
+            const result = await Tesseract.recognize(filePath, 'bos+eng', {
                 logger: m => {
                     if (m.status === 'recognizing text') {
-                        console.log(`OCR Progress: ${Math.round(m.progress * 100)}%`);
+                        console.log(`   Progress: ${(m.progress * 100).toFixed(0)}%`);
                     }
                 }
             });
-        }
-        return this.worker;
-    }
-
-    // Terminate worker
-    async terminate() {
-        if (this.worker) {
-            await this.worker.terminate();
-            this.worker = null;
-        }
-    }
-
-    // Extract text from image
-    async extractText(imagePath) {
-        try {
-            await this.initialize();
-            const { data: { text } } = await this.worker.recognize(imagePath);
-            return text;
-        } catch (error) {
-            console.error('OCR extraction error:', error);
-            throw new Error('Failed to extract text from image');
-        }
-    }
-
-    // Parse invoice/receipt and extract products with prices
-    async parseInvoice(imagePath) {
-        try {
-            const text = await this.extractText(imagePath);
-            return this.parseInvoiceText(text);
-        } catch (error) {
-            console.error('Invoice parsing error:', error);
-            throw error;
-        }
-    }
-
-    // Parse text to extract products and prices
-    parseInvoiceText(text) {
-        const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
-        const products = [];
-
-        // Patterns for product lines (various invoice formats)
-        const productPatterns = [
-            // Product name followed by price: "Product Name 123.45"
-            /^(.+?)\s+(\d+[.,]\d{2})\s*(?:KM|BAM)?$/i,
-            // Quantity Product Price: "2x Product Name 123.45"
-            /^\d+x?\s+(.+?)\s+(\d+[.,]\d{2})\s*(?:KM|BAM)?$/i,
-            // Product | Price format
-            /^(.+?)\s*[|:]\s*(\d+[.,]\d{2})\s*(?:KM|BAM)?$/i
-        ];
-
-        for (const line of lines) {
-            // Skip header/footer lines
-            if (this.isHeaderOrFooter(line)) continue;
-
-            for (const pattern of productPatterns) {
-                const match = line.match(pattern);
-                if (match) {
-                    const productName = match[1].trim();
-                    const priceText = match[2];
-                    const price = PriceParser.parsePrice(priceText);
-
-                    if (productName.length > 3 && price > 0) {
-                        products.push({
-                            name: this.cleanProductName(productName),
-                            price: price,
-                            raw: line
-                        });
-                        break;
-                    }
-                }
-            }
+            text = result.data.text;
+            console.log('✅ OCR complete');
         }
 
-        // Fallback: extract all prices and nearby text
-        if (products.length === 0) {
-            products.push(...this.extractProductsPriceHeuristic(lines));
-        }
+        // Parse products (names only)
+        const products = parseInvoiceText(text);
+
+        console.log(`📦 Found ${products.length} product names`);
+        console.log('💡 Competitor prices will be scraped automatically');
 
         return {
-            rawText: text,
+            success: true,
             products: products,
-            count: products.length
+            rawText: text
         };
-    }
 
-    // Heuristic extraction when pattern matching fails
-    extractProductsPriceHeuristic(lines) {
-        const products = [];
-        const priceRegex = /(\d+[.,]\d{2})\s*(?:KM|BAM)?/gi;
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const priceMatches = [...line.matchAll(priceRegex)];
-
-            if (priceMatches.length > 0) {
-                // Get surrounding context (previous and current line)
-                const context = i > 0 ? lines[i - 1] + ' ' + line : line;
-                const productName = context.replace(priceRegex, '').trim();
-
-                if (productName.length > 3) {
-                    const price = PriceParser.parsePrice(priceMatches[0][1]);
-                    if (price > 0) {
-                        products.push({
-                            name: this.cleanProductName(productName),
-                            price: price,
-                            raw: line
-                        });
-                    }
-                }
-            }
-        }
-
-        return products;
-    }
-
-    // Clean product name from invoice artifacts
-    cleanProductName(name) {
-        return name
-            .replace(/^\d+x?\s*/i, '')  // Remove quantity
-            .replace(/\s+/g, ' ')        // Normalize whitespace
-            .replace(/[|:]\s*$/, '')     // Remove trailing separators
-            .trim();
-    }
-
-    // Detect header/footer lines to skip
-    isHeaderOrFooter(line) {
-        const skipPatterns = [
-            /^(račun|invoice|faktura|ukupno|total|suma|subtotal|pdv|vat|tax)/i,
-            /^(datum|date|vrijeme|time|br\.|broj|number)/i,
-            /^(hvala|thank you|dobrodošli|welcome)/i,
-            /^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/,  // Dates
-            /^[-=_*]{3,}$/,                         // Separators
-            /^(str|page)\s*\d+/i                    // Page numbers
-        ];
-
-        return skipPatterns.some(pattern => pattern.test(line));
+    } catch (error) {
+        console.error('OCR error:', error.message);
+        return {
+            success: false,
+            products: [],
+            rawText: '',
+            error: error.message
+        };
     }
 }
 
-export default OCRProcessor;
+module.exports = {
+    parseInvoice,
+    parseInvoiceText,
+    cleanName
+};
