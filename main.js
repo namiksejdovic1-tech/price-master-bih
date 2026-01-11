@@ -22,6 +22,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'static')));
+app.use('/public', express.static(path.join(__dirname, 'public')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'templates'));
 
@@ -32,10 +33,18 @@ let products = [];
 const PRODUCTS_FILE = path.join(__dirname, 'products.json');
 if (fs.existsSync(PRODUCTS_FILE)) {
   try {
-    products = JSON.parse(fs.readFileSync(PRODUCTS_FILE, 'utf8'));
+    const data = fs.readFileSync(PRODUCTS_FILE, 'utf8');
+    if (data.trim()) {
+      products = JSON.parse(data);
+      console.log(`Loaded ${products.length} products from file`);
+    }
   } catch (e) {
-    console.log('Error loading products:', e);
+    console.log('Error loading products, starting with empty array:', e.message);
+    products = [];
   }
+} else {
+  console.log('Products file not found, starting with empty array');
+  products = [];
 }
 
 // Save products to file
@@ -44,6 +53,10 @@ function saveProducts() {
 }
 
 // Routes
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 app.get('/', (req, res) => {
   // Sort products by scraped_at DESC
   const sortedProducts = [...products].sort((a, b) =>
@@ -291,7 +304,7 @@ cron.schedule('0 2 * * *', async () => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`AI Price Assistant running on port ${PORT}`);
 });
 
