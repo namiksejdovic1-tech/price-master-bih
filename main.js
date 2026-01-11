@@ -2,9 +2,41 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const cron = require('node-cron');
 const multer = require('multer');
 require('dotenv').config();
+
+// Polyfill global `File` for libraries (undici/fetch) that expect a browser-like
+// environment. Prefer `fetch-blob` if available, otherwise provide a minimal
+// fallback implementation so the container doesn't crash on startup.
+try {
+  if (typeof File === 'undefined') {
+    try {
+      const { File: FetchFile } = require('fetch-blob');
+      global.File = FetchFile;
+    } catch (err) {
+      // Minimal fallback implementation
+      global.File = class File extends Buffer {
+        constructor(chunks = [], name = 'file', opts = {}) {
+          if (Array.isArray(chunks)) {
+            const buf = Buffer.concat(chunks.map(c => Buffer.isBuffer(c) ? c : Buffer.from(String(c))));
+            super(buf);
+          } else {
+            super(Buffer.from(String(chunks)));
+          }
+          this.name = name;
+          this.lastModified = opts.lastModified || Date.now();
+          this.size = this.length;
+          this.type = opts.type || '';
+        }
+      };
+    }
+  }
+} catch (e) {
+  // Do not block startup on polyfill errors
+  console.warn('Warning: File polyfill setup failed', e && e.message);
+}
 
 const scraper = require('./scraper');
 const backupScraper = require('./backup-scraper');
@@ -16,6 +48,9 @@ const cache = require('./cache');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const isCloudRun = Boolean(process.env.K_SERVICE || process.env.K_REVISION);
+const dataDir = process.env.DATA_DIR || (isCloudRun ? path.join(os.tmpdir(), 'price-app') : __dirname);
+const uploadsDir = path.join(dataDir, 'uploads');
 
 // Middleware
 app.use(cors());
@@ -30,7 +65,14 @@ app.set('views', path.join(__dirname, 'templates'));
 let products = [];
 
 // Load products from file if exists
-const PRODUCTS_FILE = path.join(__dirname, 'products.json');
+const PRODUCTS_FILE = path.join(dataDir, 'products.json');
+try {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  fs.mkdirSync(path.dirname(PRODUCTS_FILE), { recursive: true });
+} catch (e) {
+  console.warn('Warning: failed to create data directories:', e.message);
+}
+
 if (fs.existsSync(PRODUCTS_FILE)) {
   try {
     const data = fs.readFileSync(PRODUCTS_FILE, 'utf8');
@@ -49,7 +91,11 @@ if (fs.existsSync(PRODUCTS_FILE)) {
 
 // Save products to file
 function saveProducts() {
-  fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(products, null, 2));
+  try {
+    fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(products, null, 2));
+  } catch (e) {
+    console.warn('Warning: failed to save products:', e.message);
+  }
 }
 
 // Routes
@@ -209,7 +255,7 @@ app.post('/analyze', (req, res) => {
 });
 
 // File upload for invoices
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: uploadsDir });
 app.post('/upload-invoice', upload.single('invoice'), async (req, res) => {
   try {
     if (!req.file) {
