@@ -60,6 +60,13 @@
                         </svg>
                         Upload računa
                     </button>
+                    <button class="tab-btn" data-tab="sheets">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd"
+                                d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
+                        </svg>
+                        Google Sheets
+                    </button>
                 </div>
 
                 <div class="tab-content">
@@ -116,6 +123,24 @@
                             </button>
                         </form>
                     </div>
+
+                    <!-- Google Sheets Tab -->
+                    <div class="tab-panel" id="sheets-panel">
+                        <form id="sheets-form" class="input-form">
+                            <div class="form-group">
+                                <label for="sheets-url">URL Google Sheet-a</label>
+                                <input type="url" id="sheets-url" placeholder="https://docs.google.com/spreadsheets/d/..." required>
+                                <small class="form-help">Sheet mora biti javno dostupan (bez autentifikacije)</small>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd"
+                                        d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" />
+                                </svg>
+                                Uvezi podatke
+                            </button>
+                        </form>
+                    </div>
                 </div>
             </section>
 
@@ -165,6 +190,37 @@
                 <button class="btn btn-primary" onclick="applyFilters()">Primijeni</button>
                 <button class="btn btn-secondary" onclick="clearFilters()">Resetuj</button>
             </div>
+
+            <!-- AI Analysis Section -->
+            <section class="analysis-section">
+                <div class="analysis-header">
+                    <h3>AI Analiza cijena</h3>
+                    <button class="btn btn-primary" onclick="runAnalysis()" id="analyze-btn">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd"
+                                d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
+                        </svg>
+                        Pokreni analizu
+                    </button>
+                </div>
+                <div id="analysis-results" class="analysis-results" style="display: none;">
+                    <div class="analysis-table-container">
+                        <table class="analysis-table">
+                            <thead>
+                                <tr>
+                                    <th>Proizvod</th>
+                                    <th>Vaša cijena</th>
+                                    <th>Prosjek konkurenata</th>
+                                    <th>AI Savjet</th>
+                                    <th>Predložena cijena</th>
+                                </tr>
+                            </thead>
+                            <tbody id="analysis-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
 
             <!-- Loading Indicator -->
             <div id="loading" class="loading" style="display: none;">

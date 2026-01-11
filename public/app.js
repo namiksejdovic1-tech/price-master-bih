@@ -170,6 +170,42 @@ function initializeForms() {
             showLoading(false);
         }
     });
+
+    // Google Sheets Form
+    document.getElementById('sheets-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const sheetUrl = document.getElementById('sheets-url').value;
+
+        showLoading(true, 'Uvoz podataka iz Google Sheets...');
+
+        try {
+            const response = await fetch(`${API_URL}/import-sheets`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sheetUrl })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Reset form
+                document.getElementById('sheets-form').reset();
+
+                // Reload products
+                await loadProducts();
+
+                showNotification(`${data.productsAdded || 0} proizvoda uvezeno iz Sheets!`, 'success');
+            } else {
+                throw new Error(data.error || 'Import failed');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification('Greška pri uvozu iz Google Sheets', 'error');
+        } finally {
+            showLoading(false);
+        }
+    });
 }
 
 // Search and Filters
@@ -482,6 +518,72 @@ function showNotification(message, type = 'info') {
 window.showStats = function () {
     alert('Statistika feature dolazi uskoro!');
 };
+
+// AI Analysis
+window.runAnalysis = async function () {
+    const btn = document.getElementById('analyze-btn');
+    const originalText = btn.innerHTML;
+
+    // Disable button and show loading
+    btn.disabled = true;
+    btn.innerHTML = '<svg class="animate-spin" width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" /></svg> Analiza u toku...';
+
+    try {
+        const response = await fetch(`${API_URL}/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (!response.ok) {
+            throw new Error('Analysis failed');
+        }
+
+        const results = await response.json();
+        displayAnalysis(results);
+
+        showNotification('AI analiza završena!', 'success');
+    } catch (error) {
+        console.error('Analysis error:', error);
+        showNotification('Greška pri AI analizi: ' + error.message, 'error');
+    } finally {
+        // Re-enable button
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+};
+
+function displayAnalysis(results) {
+    const tbody = document.getElementById('analysis-tbody');
+    const container = document.getElementById('analysis-results');
+
+    tbody.innerHTML = '';
+
+    if (results.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-muted);">Nema podataka za analizu</td></tr>';
+        container.style.display = 'block';
+        return;
+    }
+
+    results.forEach(result => {
+        const row = document.createElement('tr');
+
+        const suggestionClass = result.suggestion === '🔴' ? 'red' :
+                               result.suggestion === '🟡' ? 'yellow' : 'green';
+
+        row.innerHTML = `
+            <td>${result.name}</td>
+            <td>${result.my_price.toFixed(2)} KM</td>
+            <td>${result.competitor_average.toFixed(2)} KM</td>
+            <td><span class="suggestion-badge ${suggestionClass}">${result.suggestion}</span></td>
+            <td>${result.suggested_price.toFixed(2)} KM</td>
+        `;
+
+        tbody.appendChild(row);
+    });
+
+    container.style.display = 'block';
+    container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 // Add slide animation CSS
 const style = document.createElement('style');
