@@ -4,7 +4,7 @@ const cheerio = require('cheerio');
 const SHOPS = {
   "Domod": {
     "url_pattern": "https://domod.ba/pretraga?keywords={}",
-    "product_card": ".product-item",
+    "product_card": ".item",
     "price": ".price",
     "link": "a"
   },
@@ -48,9 +48,26 @@ async function fetchPrice(shopName, query) {
       return { shop: shopName, price: 0, url: searchUrl, found: false };
     }
 
-    // Extract price
-    const priceEl = card.find(config.price);
-    let priceText = priceEl.length ? priceEl.text().trim() : '';
+    // Extract price - try multiple selectors
+    let priceText = '';
+    const priceSelectors = ['.price', '.regular-price', '.sale-price', '[class*="price"]', '.amount'];
+
+    for (const selector of priceSelectors) {
+      const priceEl = card.find(selector);
+      if (priceEl.length > 0) {
+        priceText = priceEl.first().text().trim();
+        if (priceText) break;
+      }
+    }
+
+    // If no price found with selectors, try to find any text containing "KM"
+    if (!priceText) {
+      const cardText = card.text();
+      const kmMatch = cardText.match(/(\d+[.,]\d{2})\s*KM/i);
+      if (kmMatch) {
+        priceText = kmMatch[1];
+      }
+    }
 
     // Clean price (convert "1.299,00 KM" to 1299.00)
     let cleanPrice = priceText.replace(/[^\d,]/g, '').replace(',', '.');

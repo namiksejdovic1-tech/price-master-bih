@@ -3,7 +3,7 @@ const { chromium } = require('playwright');
 const SHOPS = {
   "Domod": {
     "url_pattern": "https://domod.ba/pretraga?keywords={}",
-    "product_card": ".product-item",
+    "product_card": ".item",
     "price": ".price",
     "link": "a"
   },
@@ -44,11 +44,25 @@ async function fetchPrice(page, shopName, query) {
       return { shop: shopName, price: 0, url: searchUrl, found: false };
     }
 
-    // Extract price
-    const priceEl = await card.$(config.price);
+    // Extract price - try multiple selectors
     let priceText = '';
-    if (priceEl) {
-      priceText = await priceEl.innerText();
+    const priceSelectors = ['.price', '.regular-price', '.sale-price', '[class*="price"]', '.amount'];
+
+    for (const selector of priceSelectors) {
+      const priceEl = await card.$(selector);
+      if (priceEl) {
+        priceText = await priceEl.innerText();
+        if (priceText.trim()) break;
+      }
+    }
+
+    // If no price found with selectors, try to find any text containing "KM"
+    if (!priceText.trim()) {
+      const cardText = await card.innerText();
+      const kmMatch = cardText.match(/(\d+[.,]\d{2})\s*KM/i);
+      if (kmMatch) {
+        priceText = kmMatch[1];
+      }
     }
 
     // Clean price (convert "1.299,00 KM" to 1299.00)

@@ -121,6 +121,12 @@ app.post('/scrape', async (req, res) => {
         }
       }
 
+      // Check if scraping completely failed
+      const hasAnyPrice = prices.some(price => price > 0);
+      if (!hasAnyPrice) {
+        throw new Error('Failed to scrape any products from competitor shops. This may be due to website changes or blocking.');
+      }
+
       // Cache the result
       cache.set(name, { prices, timestamp: Date.now() });
 
