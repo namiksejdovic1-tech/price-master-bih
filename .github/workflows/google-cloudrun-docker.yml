@@ -37,7 +37,7 @@ env:
   PROJECT_ID: 'price-master-bh-202601060055'
   REGION: 'europe-west1'
   SERVICE: 'price-master-bh'
-  REPOSITORY: 'price-master-bih'
+  REPOSITORY: 'cloud-run-source-deploy'
 
 jobs:
   deploy:
