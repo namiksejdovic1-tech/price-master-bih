@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  price-master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: price-master-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: always
+    volumes:
+      - ./products.json:/usr/src/app/products.json
+      - ./uploads:/usr/src/app/uploads
+    networks:
+      - price-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  price-network:
+    driver: bridge
